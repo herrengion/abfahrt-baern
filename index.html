@@ -1,0 +1,871 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1c1c1e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Abfahrten">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<meta name="color-scheme" content="dark">
+<title>Abfahrtsanzeige Bern</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Doto:wght@900&family=DotGothic16&family=Inter:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --amber: #ffa926;
+    --amber-glow: rgba(255, 140, 20, .55);
+    --screen: #060606;
+    --sans: "Frutiger", "Inter", "Helvetica Neue", Arial, system-ui, sans-serif;
+    --dots: "Doto", "DotGothic16", ui-monospace, "Courier New", monospace;
+    --rows: 4;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid;
+    place-items: center;
+    padding: max(16px, env(safe-area-inset-top)) env(safe-area-inset-right) max(16px, env(safe-area-inset-bottom)) env(safe-area-inset-left);
+    background: radial-gradient(120% 90% at 50% 40%, #3b3b3e 0%, #1c1c1e 70%);
+    color: #ddd;
+    font-family: var(--sans);
+  }
+
+  /* Everything inside .wrap is sized in container units, so the sign scales to any screen. */
+  /* Width is also limited by the height, so the whole sign stays visible on a phone held in landscape. */
+  .wrap { width: min(94vw, 1100px, calc((100dvh - 90px) * 1.6)); container-type: inline-size; }
+  .sign { display: flex; flex-direction: column; filter: drop-shadow(0 2cqw 3cqw rgba(0, 0, 0, .55)); }
+
+  .housing {
+    /* Brushed silver aluminium: lighter than the page background so the sign still stands out. */
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, .45) 0, rgba(255, 255, 255, 0) 9%, rgba(0, 0, 0, 0) 90%, rgba(0, 0, 0, .22) 100%),
+      linear-gradient(100deg, #a4a8ad 0%, #b9bcc0 30%, #9fa3a8 55%, #b2b5b9 80%, #979ba0 100%);
+    box-shadow: inset 0 0 0 .2cqw rgba(255, 255, 255, .28), inset 0 0 0 .5cqw rgba(60, 63, 68, .35);
+    padding: 4.2cqw .8cqw 4.8cqw;
+    border-radius: .8cqw;
+  }
+  .screen {
+    position: relative;
+    overflow: hidden;
+    background: var(--screen);
+    padding: 2.2cqw 2.4cqw 0;
+    border-radius: .3cqw;
+    box-shadow: 0 0 0 .45cqw #2a2c30;   /* dark anthracite bezel around the screen */
+  }
+  .screen::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(115deg, rgba(255, 255, 255, .07) 0%, rgba(255, 255, 255, 0) 35%);
+  }
+
+  .stop {
+    /* Generous line height: overflow:hidden (needed for the ellipsis) would otherwise clip descenders like the "g". */
+    margin: 0 0 .1cqw;
+    padding-left: .6cqw;
+    font: 700 5cqw/1.35 var(--sans);
+    letter-spacing: .01em;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Column widths leave about 19 characters for the destination; longer names run as a ticker (see JS). */
+  .cols, .row { display: grid; grid-template-columns: 12cqw 1fr 16.5cqw; }
+  .cols { margin-bottom: 1.4cqw; font: 500 2.6cqw/1.2 var(--sans); color: #fff; }
+  .cols .c { border-left: 1px solid #c4c4c4; padding-left: .7cqw; }
+
+  .rows {
+    list-style: none;
+    margin: 0 -2.4cqw;
+    padding: 1cqw 2.4cqw .6cqw;
+    background: #1d1507;
+    min-height: calc(var(--rows) * 8.7cqw + 1.6cqw);
+  }
+  .row {
+    align-items: baseline;
+    font: 900 5.3cqw/1.64 var(--dots);
+    color: var(--amber);
+    text-shadow: 0 0 1.2cqw var(--amber-glow);
+  }
+  /* If the dot-matrix web font could not load (offline, blocked), fake the LED grid on the fallback font. */
+  .fallback-dots .row .line,
+  .fallback-dots .row .view,
+  .fallback-dots .row .eta[data-kind="text"] {   /* not the bus pictogram: it is already made of dots */
+    -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 40%, transparent 60%);
+    mask-image: radial-gradient(circle at 50% 50%, #000 40%, transparent 60%);
+    -webkit-mask-size: .53cqw .53cqw;
+    mask-size: .53cqw .53cqw;
+  }
+  .row .line { text-align: right; padding-right: 1.8cqw; }
+  .row .dest { padding-left: .8cqw; min-width: 0; }
+  /* .view clips the ticker. Its vertical padding, cancelled by the negative margin, keeps descenders and umlauts from being clipped. */
+  .row .view { display: block; overflow: hidden; padding: .22em 0 .28em; margin: -.22em 0 -.28em; }
+  .row .track { display: flex; gap: 5cqw; width: max-content; white-space: nowrap; }
+  .row .txt { flex: none; }
+  .row .eta { text-align: right; padding-right: 1.6cqw; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* Bus pictogram shown instead of "0'" when the vehicle is due; its bottom edge sits on the baseline like the digits. */
+  .row .bus {
+    display: inline-block; height: 3.9cqw; width: auto; aspect-ratio: 46 / 14;
+    vertical-align: baseline; filter: drop-shadow(0 0 1.2cqw var(--amber-glow));
+  }
+  .row.note .dest { grid-column: 2 / 4; }
+
+  .meta {
+    margin: 2.4cqw 0 0;
+    text-align: center;
+    font: 400 max(11px, 1.5cqw)/1.4 var(--sans);
+    color: #8c8c90;
+  }
+
+  /* Settings */
+  #gear {
+    position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom));
+    width: 56px; height: 56px; border-radius: 50%;
+    border: 1px solid #8a8a90; background: #34343a; color: #f0f0f2;
+    font-size: 30px; line-height: 1; cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .5);
+    opacity: .75; transition: opacity .2s, background .2s;
+  }
+  #gear:hover, #gear:focus-visible { opacity: 1; background: #44444b; }
+  dialog {
+    width: min(92vw, 420px); padding: 20px 22px;
+    border: 1px solid #55555a; border-radius: 12px;
+    background: #202023; color: #e6e6e8; font: 400 15px/1.4 var(--sans);
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .6); }
+  dialog h2 { margin: 0 0 14px; font-size: 18px; }
+  dialog label { display: block; margin-bottom: 12px; font-size: 13px; color: #b5b5ba; }
+  dialog input[type=text], dialog input[type=number] {
+    display: block; width: 100%; margin-top: 4px; padding: 8px 10px;
+    border: 1px solid #55555a; border-radius: 6px; background: #121214; color: #fff; font: inherit; font-size: 15px;
+  }
+  dialog fieldset { margin: 0 0 12px; padding: 8px 10px; border: 1px solid #55555a; border-radius: 6px; }
+  dialog legend { padding: 0 4px; font-size: 13px; color: #b5b5ba; }
+  dialog .check { display: inline-flex; align-items: center; gap: 6px; margin: 0 14px 0 0; font-size: 14px; color: #e6e6e8; }
+  dialog .hint { margin: 0 0 14px; font-size: 12px; color: #8c8c90; }
+  dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  dialog button { padding: 8px 14px; border-radius: 6px; border: 1px solid #55555a; background: #2c2c30; color: #fff; font: inherit; cursor: pointer; }
+  dialog button.primary { background: var(--amber); border-color: var(--amber); color: #1a1100; font-weight: 600; }
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="sign">
+      <div class="housing">
+        <div class="screen">
+          <h1 class="stop" id="stop">Zytglogge</h1>
+          <div class="cols" aria-hidden="true">
+            <span class="c">Linie</span>
+            <span class="c">Ziel</span>
+            <span class="c">Abfahrt</span>
+          </div>
+          <ol class="rows" id="rows" aria-live="off"></ol>
+        </div>
+      </div>
+    </div>
+    <p class="meta" id="meta"></p>
+  </main>
+
+  <button id="gear" type="button" aria-label="Einstellungen" title="Einstellungen">&#9881;</button>
+
+  <dialog id="settings">
+    <form id="settingsForm">
+      <h2>Einstellungen</h2>
+      <label>Haltestelle
+        <input id="fStation" type="text" list="stationList" autocomplete="off" required>
+      </label>
+      <datalist id="stationList"></datalist>
+      <label>Nur Linien
+        <input id="fLines" type="text" placeholder="z. B. 6, 7, 8 (leer = alle)">
+      </label>
+      <label>Nur Ziele, die enthalten
+        <input id="fDests" type="text" placeholder="z. B. Saali, Ostring (leer = alle)">
+      </label>
+      <fieldset>
+        <legend>Verkehrsmittel</legend>
+        <label class="check"><input type="checkbox" name="mode" value="tram"> Tram</label>
+        <label class="check"><input type="checkbox" name="mode" value="bus"> Bus</label>
+        <label class="check"><input type="checkbox" name="mode" value="train"> Zug</label>
+      </fieldset>
+      <label>Anzahl Zeilen (1&ndash;8)
+        <input id="fRows" type="number" min="1" max="8">
+      </label>
+      <label class="check"><input id="fDemo" type="checkbox"> Demo-Daten statt Live-Daten</label>
+      <p class="hint">Taste <b>F</b> oder Doppelklick auf die Anzeige: Vollbild.</p>
+      <div class="actions">
+        <button type="button" id="cancel">Abbrechen</button>
+        <button type="submit" class="primary">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+<script>
+(() => {
+  'use strict';
+
+  /*
+   * Departure board in the style of the Bern stop displays.
+   * Data: transport.opendata.ch (CORS enabled, no API key), timetable data from opentransportdata.swiss.
+   *
+   * Optional URL parameters (override saved settings):
+   *   ?station=Bern, Zytglogge&lines=7,8&dests=Saali&modes=tram,bus&rows=4&demo=1
+   */
+
+  const API = 'https://transport.opendata.ch/v1';
+  const POLL_MS = 30_000;           // real-time data only changes about every 30 s, so don't poll faster
+  const MAX_BACKOFF_MS = 300_000;
+  const STORE_KEY = 'bern-departures-config-v1';
+  const DEFAULTS = {
+    station: 'Bern, Zytglogge',
+    lines: '',
+    dests: '',
+    modes: ['tram', 'bus'],
+    rows: 4,
+    demo: false,
+  };
+  const TRAIN_CATEGORIES = new Set(['S', 'R', 'RE', 'IR', 'IC', 'ICE', 'EC', 'RJ', 'RJX', 'TGV', 'PE', 'EXT', 'SN']);
+
+  const $ = (id) => document.getElementById(id);
+
+  // ---------- config ----------
+
+  function clampInt(value, min, max, fallback) {
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+  }
+
+  function loadConfig() {
+    let stored = {};
+    try { stored = JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch { /* storage unavailable */ }
+    const cfg = { ...DEFAULTS, ...stored };
+    const q = new URLSearchParams(location.search);
+    if (q.has('station')) cfg.station = q.get('station');
+    if (q.has('lines')) cfg.lines = q.get('lines');
+    if (q.has('dests')) cfg.dests = q.get('dests');
+    if (q.has('modes')) cfg.modes = q.get('modes').split(',').map((s) => s.trim()).filter(Boolean);
+    if (q.has('rows')) cfg.rows = q.get('rows');
+    if (q.has('demo')) cfg.demo = q.get('demo') !== '0';
+    cfg.rows = clampInt(cfg.rows, 1, 8, DEFAULTS.rows);
+    if (!Array.isArray(cfg.modes) || !cfg.modes.length) cfg.modes = DEFAULTS.modes;
+    return cfg;
+  }
+
+  function saveConfig(cfg) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(cfg)); } catch { /* ignore */ }
+  }
+
+  let cfg = loadConfig();
+
+  // ---------- data ----------
+
+  function parseIso(s) {
+    if (!s) return null;
+    // Normalise "+0200" to "+02:00" so Safari parses it too.
+    const t = Date.parse(String(s).replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
+    return Number.isNaN(t) ? null : t;
+  }
+
+  function lineLabel(entry) {
+    const cat = String(entry.category || '').toUpperCase();
+    const num = String(entry.number || '').trim();
+    if (TRAIN_CATEGORIES.has(cat)) {
+      return num.toUpperCase().startsWith(cat) ? num : cat + num;   // e.g. "S1", "IC5"
+    }
+    return num || String(entry.name || '').replace(/^(Tram|Bus|T|B)\s*/i, '').trim() || '?';
+  }
+
+  // Mode qualifiers the API appends to some stop names, e.g. "Weissenbühl (Tram)".
+  const MODE_SUFFIX = /\s*\((?:tram|bus|trolleybus|trolley)\)\s*$/i;
+
+  function formatDest(to) {
+    return String(to || '')
+      .replace(MODE_SUFFIX, '')
+      .replace(/^Bern,\s*/i, '')   // local stops: "Bern, Saali" -> "Saali"
+      .replace(/,\s*/g, ' ')       // "Worb, Dorf" -> "Worb Dorf"
+      .trim();
+  }
+
+  // Lookup table: line -> destination texts as shown on the real Bern displays (termini and
+  // short-turn points from the Wikipedia line lists). Anything not listed falls back to formatDest().
+  const LINE_DESTS = {
+    '3': ['Weissenbühl', 'Bern Bahnhof'],
+    '6': ['Fischermätteli', 'Bern Bahnhof', 'Worb Dorf'],
+    '7': ['Bümpliz', 'Bern Bahnhof', 'Ostring'],
+    '8': ['Brünnen Westside', 'Bern Bahnhof', 'Saali'],
+    '9': ['Wabern', 'Bern Bahnhof', 'Wankdorf Bhf'],
+    '10': ['Köniz Schliern', 'Bern Bahnhof', 'Ostermundigen Rüti'],
+    '11': ['Bern Bahnhof', 'Neufeld P+R'],
+    '12': ['Holligen', 'Bern Bahnhof', 'Zentrum Paul Klee'],
+    '16': ['Köniz Zentrum', 'Gurten-Gartenstadt'],
+    '17': ['Bern Bahnhof', 'Weiermatt'],
+    '18': ['Bern Bahnhof', 'Wyleregg'],
+    '19': ['Blinzern', 'Bern Bahnhof', 'Elfenau'],
+    '20': ['Länggasse', 'Bern Bahnhof', 'Wankdorf Bhf'],
+    '21': ['Bern Bahnhof', 'Bremgarten'],
+    '22': ['Brünnen', 'Kleinwabern'],
+    '24': ['Breitfeld', 'Gewerbeschule'],
+    '26': ['Breitenrain', 'Wylergut'],
+    '27': ['Niederwangen', 'Weyermannshaus'],
+    '28': ['Weissenbühl', 'Wankdorf Bhf'],
+    '29': ['Niederwangen', 'Wabern Lindenweg'],
+    '30': ['Bern Bahnhof', 'Marzilistrasse'],
+    '31': ['Niederwangen', 'Brunnadern'],
+    '32': ['Riedbach', 'Bachmätteli'],
+    '160': ['Bern Flughafen', 'Belp', 'Rubigen', 'Münsingen', 'Konolfingen'],
+    '161': ['Münsingen Bahnhof', 'Spital'],
+    '162': ['Münsingen Bahnhof', 'Sonnhalde'],
+    '163': ['Münsingen Bahnhof', 'PZM', 'Brückreuti'],
+    '165': ['Münsingen', 'Wichtrach', 'Gerzensee', 'Kirchdorf'],
+    '166': ['Wichtrach', 'Kirchdorf', 'Gerzensee', 'Kaufdorf'],
+    '167': ['Münsingen', 'Wichtrach', 'Oppligen', 'Oberdiessbach'],
+    '168': ['Münsingen', 'Trimstein', 'Worb SBB', 'Worb Dorf'],
+    '331': ['Belp Bahnhof', 'Belp Riedli'],
+    '332': ['Belp Bahnhof', 'Belp Aemmenmatt'],
+  };
+
+  // Comparison keys: lower case, punctuation removed. Returns [full, withoutLeadingBern].
+  function destKeys(s) {
+    const full = String(s || '').replace(MODE_SUFFIX, '').toLowerCase().replace(/[^a-z0-9äöüéèàâêç]+/g, ' ').trim();
+    return [full, full.replace(/^bern /, '')];
+  }
+
+  // Words that identify a town or district rather than a stop; sharing only these is no match.
+  const PLACE_WORDS = new Set(['bern', 'worb', 'wabern', 'köniz', 'belp', 'münsingen', 'niederwangen',
+    'ostermundigen', 'zollikofen', 'ittigen', 'muri', 'bolligen', 'wichtrach', 'konolfingen', 'brünnen']);
+  // Words that appear in many stop names and therefore do not identify one either.
+  const GENERIC_WORDS = new Set(['bahnhof', 'bhf', 'bf', 'sbb', 'hb', 'tram', 'bus', 'endstation', 'endhaltestelle']);
+
+  // Distinctive words of a destination text (parenthesised notes, towns and generic words removed).
+  function destWords(s) {
+    return destKeys(String(s || '').replace(/\([^)]*\)/g, ' '))[0]
+      .split(' ')
+      .filter((w) => w.length > 1 && !PLACE_WORDS.has(w) && !GENERIC_WORDS.has(w));
+  }
+
+  // Like destWords(), but a text made only of towns/generic words ("Niederwangen") keeps its town words.
+  function matchWords(s) {
+    const words = destWords(s);
+    if (words.length) return words;
+    return destKeys(String(s || '').replace(/\([^)]*\)/g, ' '))[0].split(' ')
+      .filter((w) => w.length > 1 && !GENERIC_WORDS.has(w));
+  }
+
+  // Same word, or one is the stem of the other ("brunnadern" / "brunnadernstrasse").
+  function sameWord(w, set) {
+    for (const o of set) {
+      if (o === w || (Math.min(o.length, w.length) >= 6 && (o.startsWith(w) || w.startsWith(o)))) return true;
+    }
+    return false;
+  }
+
+  // Displayed destination for a line:
+  // 1. exact match (ignoring case, punctuation, a leading "Bern,");
+  // 2. API name is a shorter form of a listed text ("Brünnen Westside" -> "Brünnen Westside Bahnhof");
+  // 3. partial match on distinctive words, only within the same line;
+  // otherwise the default formatting.
+  function displayDest(line, to) {
+    const list = LINE_DESTS[line];
+    if (list) {
+      const api = destKeys(to);
+      let best = null;
+      let bestScore = 0;
+      for (const text of list) {
+        const alias = destKeys(text);
+        let score = 0;
+        if (api.some((a) => alias.includes(a))) score = 3;
+        else if (api[1] && alias[1].startsWith(api[1] + ' ')) score = 2;
+        if (score > bestScore) { best = text; bestScore = score; }
+      }
+      if (best) return best;
+
+      const apiWords = new Set(matchWords(to));
+      let tie = false;
+      let bestShared = 0;
+      for (const text of list) {
+        const words = matchWords(text);
+        const shared = words.filter((w) => sameWord(w, apiWords)).length;
+        if (!shared || shared < Math.ceil(words.length / 2)) continue;   // at least half of the listed words
+        if (shared > bestShared) { best = text; bestShared = shared; tie = false; }
+        else if (shared === bestShared) tie = true;
+      }
+      if (best && !tie) return best;
+    }
+    return formatDest(to);
+  }
+
+  function normalize(entry) {
+    const stop = entry.stop || {};
+    const scheduled = parseIso(stop.departure);
+    const live = parseIso(stop.prognosis && stop.prognosis.departure);
+    const when = live !== null ? live : scheduled;
+    if (when === null) return null;
+    const line = lineLabel(entry);
+    return { line, dest: displayDest(line, entry.to), when };
+  }
+
+  async function loadBoard(c) {
+    const url = new URL(API + '/stationboard');
+    url.searchParams.set('station', c.station);
+    // Ask for more than we show, because line/destination filters are applied client-side.
+    url.searchParams.set('limit', String(Math.min(60, c.rows * 8 + 8)));
+    for (const m of c.modes) url.searchParams.append('transportations[]', m);
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10_000);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      return {
+        items: (json.stationboard || []).map(normalize).filter(Boolean),
+        // The stop the API actually resolved the query to (e.g. "zytglogge" -> "Bern, Zytglogge").
+        stationName: json.station && json.station.name ? String(json.station.name) : null,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // Deterministic demo timetable: departures sit on fixed absolute minutes, so the countdown is consistent.
+  const DEMO_LINES = [
+    { line: '8', dest: 'Saali', every: 7, offset: 2 },
+    { line: '7', dest: 'Ostring', every: 8, offset: 3 },
+    { line: '6', dest: 'Worb Dorf', every: 10, offset: 4 },
+    { line: '9', dest: 'Wabern', every: 9, offset: 1 },
+  ];
+
+  function demoItems(now) {
+    const m0 = Math.floor(now / 60000);
+    const out = [];
+    for (const d of DEMO_LINES) {
+      for (let m = m0; m <= m0 + 60; m++) {
+        if (m % d.every === d.offset) out.push({ line: d.line, dest: d.dest, when: m * 60000 });
+      }
+    }
+    return out;
+  }
+
+  // ---------- selection & formatting ----------
+
+  function splitList(s) {
+    return String(s || '').split(',').map((x) => x.trim()).filter(Boolean);
+  }
+
+  // Whole minutes between the current clock minute and the departure minute.
+  function minutesUntil(when, now) {
+    return Math.floor(when / 60000) - Math.floor(now / 60000);
+  }
+
+  function etaText(when, now) {
+    const min = minutesUntil(when, now);
+    if (min >= 60) {
+      return new Date(when).toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' });
+    }
+    return min + "'";
+  }
+
+  function selectRows(items, c, now) {
+    const lines = splitList(c.lines).map((s) => s.toUpperCase());
+    const dests = splitList(c.dests).map((s) => s.toLowerCase());
+    return items
+      .filter((it) => minutesUntil(it.when, now) >= 0)
+      .filter((it) => !lines.length || lines.includes(it.line.toUpperCase()))
+      .filter((it) => !dests.length || dests.some((d) => it.dest.toLowerCase().includes(d)))
+      .sort((a, b) => a.when - b.when)
+      .slice(0, c.rows);
+  }
+
+  // Same naming rule as for destinations: "Bern, Zytglogge" -> "Zytglogge", "Köniz, Bahnhof" -> "Köniz Bahnhof".
+  function stopTitle(station) {
+    return formatDest(station) || String(station);
+  }
+
+  // ---------- rendering ----------
+
+  const state = { items: [], stationName: null, updatedAt: null, failures: 0, loading: true };
+
+  // Pixel bitmap of a bus in side view (46 x 14 LED dots), drawn in place of "0'" when a vehicle is due.
+  // Modelled on the pictogram of the Bern displays: dimmer glazed upper half (thin frame, two windows,
+  // a door with thin bars that continues through the lower body, a large front window, a narrow
+  // windscreen) and a bright lower body with two round wheels in their wheel arches.
+  // '#' = full brightness, '+' = dimmer, '.' = off.
+  const BUS_DOOR = '+..+..+..+';
+  const BUS_GLAZING =
+    '++' + '.....' +            // rear frame, window
+    '++' + '.......' +          // pillar, window
+    BUS_DOOR + '..............' + // door, large window
+    '++' + '..' + '++';         // pillar, windscreen, front frame
+  const BUS_WHEEL = [           // 8 x 6 dots: arch, tire with a dark hub; the last row hangs below the body
+    '........',
+    '..####..',
+    '.##++##.',
+    '.##..##.',
+    '..####..',
+    '..++++..',
+  ];
+  const busBody = (r) => '#'.repeat(7) + BUS_WHEEL[r] + '#' + BUS_DOOR + '#####' + BUS_WHEEL[r] + '#'.repeat(7);
+  const BUS_BITMAP = [
+    '.' + '+'.repeat(44) + '.',                                          // roof, rounded corners
+    '+'.repeat(46),
+    BUS_GLAZING, BUS_GLAZING, BUS_GLAZING, BUS_GLAZING, BUS_GLAZING,    // glazing
+    '+'.repeat(46),                                                      // belt line
+    busBody(0), busBody(1), busBody(2), busBody(3), busBody(4),          // lower body with wheels
+    '.'.repeat(7) + BUS_WHEEL[5] + '.'.repeat(16) + BUS_WHEEL[5] + '.'.repeat(7),   // bottom of the tires
+  ];
+
+  function buildBusIcon() {
+    const ns = 'http://www.w3.org/2000/svg';
+    const paths = { '#': '', '+': '' };
+    BUS_BITMAP.forEach((row, y) => {
+      [...row].forEach((ch, x) => {
+        // slightly inset squares: a hairline gap between the dots
+        if (ch in paths) paths[ch] += `M${x + 0.06} ${y + 0.06}h.88v.88h-.88z`;
+      });
+    });
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${BUS_BITMAP[0].length} ${BUS_BITMAP.length}`);
+    svg.setAttribute('class', 'bus');
+    svg.setAttribute('aria-hidden', 'true');
+    for (const [ch, opacity] of [['+', 0.7], ['#', 1]]) {
+      const path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', paths[ch]);
+      path.setAttribute('fill', 'currentColor');
+      path.setAttribute('fill-opacity', String(opacity));
+      svg.append(path);
+    }
+    return svg;
+  }
+
+  const BUS_ICON = buildBusIcon();
+
+  function cell(cls, text) {
+    const el = document.createElement('span');
+    el.className = cls;
+    el.textContent = text;   // textContent only: API data is never parsed as HTML
+    return el;
+  }
+
+  // ---- destinations: static first, then a ticker tape if the name does not fit ----
+
+  const TICKER_PAUSE_MS = 4000;   // the name stays still for this long, then runs through
+  const TICKER_SPEED = 0.2;       // visible widths per second
+
+  function measureDest(dest) {
+    const view = dest.firstElementChild;
+    const track = view.firstElementChild;
+    if (dest._ticker) { dest._ticker.cancel(); dest._ticker = null; }
+    while (track.children.length > 1) track.lastElementChild.remove();   // drop the ticker copy
+
+    const txt = track.firstElementChild;
+    if (!txt) return;
+    const full = dest.dataset.text || txt.textContent;
+    txt.textContent = full;                                   // start from the unabbreviated text
+    let textWidth = txt.getBoundingClientRect().width;
+    const viewWidth = view.clientWidth;
+    if (!viewWidth || textWidth <= viewWidth + 0.5) return;   // fits: stays static
+
+    // Too long: abbreviate "Bahnhof" to "Bhf" first, as on the real displays; ticker only if still too long.
+    const short = full.replace(/\bBahnhof\b/g, 'Bhf');
+    if (short !== full) {
+      txt.textContent = short;
+      textWidth = txt.getBoundingClientRect().width;
+      if (textWidth <= viewWidth + 0.5) return;
+    }
+
+    // Second copy behind the first one: when the track has moved by one text + gap, it sits exactly where the first started.
+    const copy = txt.cloneNode(true);
+    copy.setAttribute('aria-hidden', 'true');
+    track.append(copy);
+    const distance = textWidth + (parseFloat(getComputedStyle(track).columnGap) || 0);
+    const moveMs = (distance / (viewWidth * TICKER_SPEED)) * 1000;
+    const total = TICKER_PAUSE_MS + moveMs;
+    dest._ticker = track.animate(
+      [
+        { transform: 'translateX(0)', offset: 0 },
+        { transform: 'translateX(0)', offset: TICKER_PAUSE_MS / total },
+        { transform: `translateX(${-distance}px)`, offset: 1 },
+      ],
+      { duration: total, iterations: Infinity, easing: 'linear' }
+    );
+  }
+
+  function setDest(dest, text) {
+    if (dest.dataset.text === text) return;   // unchanged: a running ticker keeps running
+    dest.dataset.text = text;
+    const txt = document.createElement('span');
+    txt.className = 'txt';
+    txt.textContent = text;
+    dest.firstElementChild.firstElementChild.replaceChildren(txt);
+    measureDest(dest);
+  }
+
+  function remeasureAll() {
+    for (const dest of document.querySelectorAll('#rows .dest')) measureDest(dest);
+  }
+
+  // ---- rows are patched in place, so unchanged destinations never restart their ticker ----
+
+  function makeRow() {
+    const li = document.createElement('li');
+    li.className = 'row';
+    const dest = document.createElement('span');
+    dest.className = 'dest';
+    const view = document.createElement('span');
+    view.className = 'view';
+    const track = document.createElement('span');
+    track.className = 'track';
+    view.append(track);
+    dest.append(view);
+    li.append(cell('line', ''), dest, cell('eta', ''));
+    return li;
+  }
+
+  function fillEta(el, r) {
+    if (r.arriving) {
+      if (el.dataset.kind !== 'bus') {
+        el.replaceChildren(BUS_ICON.cloneNode(true));
+        el.dataset.kind = 'bus';
+      }
+    } else {
+      if (el.dataset.kind !== 'text') {
+        el.replaceChildren();
+        el.dataset.kind = 'text';
+      }
+      if (el.textContent !== r.eta) el.textContent = r.eta;
+    }
+  }
+
+  function fillRow(li, r) {
+    const [line, dest, eta] = li.children;
+    if (line.textContent !== r.line) line.textContent = r.line;
+    setDest(dest, r.dest);
+    fillEta(eta, r);
+    li.classList.toggle('note', Boolean(r.note));
+  }
+
+  function removeRow(li) {
+    const dest = li.querySelector('.dest');
+    if (dest && dest._ticker) dest._ticker.cancel();
+    li.remove();
+  }
+
+  function spokenEta(r) {
+    if (r.arriving) return 'jetzt';
+    return r.eta.includes(':') ? 'um ' + r.eta : 'in ' + r.eta.replace("'", ' Min.');
+  }
+
+  function render() {
+    const now = Date.now();
+    const rows = selectRows(state.items, cfg, now).map((r) => ({
+      line: r.line,
+      dest: r.dest,
+      arriving: minutesUntil(r.when, now) === 0,
+      eta: etaText(r.when, now),
+    }));
+
+    let note = '';
+    if (!rows.length && !state.loading) {
+      note = state.updatedAt === null && state.failures > 0 ? 'Keine Verbindung' : 'Keine Abfahrten';
+    }
+
+    const entries = note ? [{ line: '', dest: note, arriving: false, eta: '', note: true }] : rows;
+    const list = $('rows');
+    while (list.children.length > entries.length) removeRow(list.lastElementChild);
+    while (list.children.length < entries.length) list.append(makeRow());
+    entries.forEach((entry, i) => fillRow(list.children[i], entry));
+
+    const label = rows.map((r) => `Linie ${r.line} nach ${r.dest}, ${spokenEta(r)}`).join('; ');
+    if (list.getAttribute('aria-label') !== label) list.setAttribute('aria-label', label);
+
+    $('meta').textContent = metaText();
+  }
+
+  function metaText() {
+    const credit = 'Fahrplandaten: opentransportdata.swiss';
+    if (cfg.demo) return 'Demo-Daten · ' + credit;
+    const stand = state.updatedAt
+      ? new Date(state.updatedAt).toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      : null;
+    if (state.failures > 0) {
+      return (stand ? `Keine Verbindung, letzter Stand ${stand}` : 'Keine Verbindung') + ' · ' + credit;
+    }
+    return (stand ? `Stand ${stand}` : 'Lade …') + ' · ' + credit;
+  }
+
+  // Title follows the stop the API resolved; until the first answer, fall back to what was configured.
+  function applyTitle() {
+    const title = stopTitle(state.stationName || cfg.station);
+    $('stop').textContent = title;
+    document.title = 'Abfahrten ' + title;
+  }
+
+  function applyConfig() {
+    applyTitle();
+    document.documentElement.style.setProperty('--rows', String(cfg.rows));
+  }
+
+  // ---------- polling ----------
+
+  let pollTimer = 0;
+
+  async function refresh() {
+    clearTimeout(pollTimer);
+    if (document.hidden) {
+      pollTimer = setTimeout(refresh, POLL_MS);
+      return;
+    }
+    try {
+      if (cfg.demo) {
+        state.items = demoItems(Date.now());
+        state.stationName = null;
+      } else {
+        const board = await loadBoard(cfg);
+        state.items = board.items;
+        state.stationName = board.stationName;
+      }
+      state.updatedAt = Date.now();
+      state.failures = 0;
+      applyTitle();
+    } catch (err) {
+      state.failures += 1;
+      console.warn('Refresh failed:', err);
+    } finally {
+      state.loading = false;
+      render();
+    }
+    const delay = state.failures
+      ? Math.min(15_000 * 2 ** (state.failures - 1), MAX_BACKOFF_MS)
+      : POLL_MS;
+    pollTimer = setTimeout(refresh, delay);
+  }
+
+  // ---------- settings dialog ----------
+
+  const dialog = $('settings');
+
+  function openSettings() {
+    $('fStation').value = cfg.station;
+    $('fLines').value = cfg.lines;
+    $('fDests').value = cfg.dests;
+    $('fRows').value = cfg.rows;
+    $('fDemo').checked = cfg.demo;
+    for (const box of document.querySelectorAll('input[name=mode]')) box.checked = cfg.modes.includes(box.value);
+    dialog.showModal();
+  }
+
+  $('gear').addEventListener('click', openSettings);
+  $('cancel').addEventListener('click', () => dialog.close());
+
+  $('settingsForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const modes = [...document.querySelectorAll('input[name=mode]:checked')].map((b) => b.value);
+    cfg = {
+      station: $('fStation').value.trim() || DEFAULTS.station,
+      lines: $('fLines').value.trim(),
+      dests: $('fDests').value.trim(),
+      modes: modes.length ? modes : DEFAULTS.modes,
+      rows: clampInt($('fRows').value, 1, 8, DEFAULTS.rows),
+      demo: $('fDemo').checked,
+    };
+    saveConfig(cfg);
+    dialog.close();
+    state.items = [];
+    state.stationName = null;
+    state.updatedAt = null;
+    state.failures = 0;
+    state.loading = true;
+    applyConfig();
+    render();
+    refresh();
+  });
+
+  // Station name autocomplete (debounced, to stay friendly to the shared API).
+  let acTimer = 0;
+  $('fStation').addEventListener('input', () => {
+    clearTimeout(acTimer);
+    const q = $('fStation').value.trim();
+    if (q.length < 2) return;
+    acTimer = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API}/locations?type=station&query=${encodeURIComponent(q)}`);
+        const json = await res.json();
+        const options = (json.stations || []).filter((s) => s.name).slice(0, 8).map((s) => {
+          const o = document.createElement('option');
+          o.value = s.name;
+          return o;
+        });
+        $('stationList').replaceChildren(...options);
+      } catch { /* autocomplete is optional */ }
+    }, 300);
+  });
+
+  // ---------- kiosk helpers ----------
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+  }
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'f' || e.key === 'F') && !e.target.closest('dialog') && !e.metaKey && !e.ctrlKey) toggleFullscreen();
+  });
+  document.querySelector('.sign').addEventListener('dblclick', toggleFullscreen);
+
+  // Keep a wall-mounted tablet awake (needs a secure context; silently skipped otherwise).
+  async function keepAwake() {
+    try {
+      if ('wakeLock' in navigator && document.visibilityState === 'visible') {
+        await navigator.wakeLock.request('screen');
+      }
+    } catch { /* not supported or denied */ }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      keepAwake();
+      remeasureAll();   // layout widths are 0 while the tab is hidden
+      refresh();
+    }
+  });
+
+  // ---------- start ----------
+
+  document.fonts.ready.then(() => {
+    const dotFontLoaded = [...document.fonts].some(
+      (f) => f.family.replace(/["']/g, '') === 'Doto' && f.status === 'loaded'
+    );
+    if (!dotFontLoaded) document.documentElement.classList.add('fallback-dots');
+    remeasureAll();
+  });
+  // Text widths change when the web font arrives and when the window is resized: re-check what needs the ticker.
+  document.fonts.addEventListener('loadingdone', remeasureAll);
+  let lastWidth = 0;
+  new ResizeObserver(([entry]) => {
+    const width = Math.round(entry.contentRect.width);
+    if (width !== lastWidth) {
+      lastWidth = width;
+      remeasureAll();
+    }
+  }).observe(document.querySelector('.wrap'));
+
+  // Offline-capable app shell (only over http(s); skipped for file:// previews).
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+
+  applyConfig();
+  render();
+  refresh();
+  keepAwake();
+  setInterval(render, 1000);   // minute counters tick locally between data refreshes
+})();
+</script>
+</body>
+</html>
