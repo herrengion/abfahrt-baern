@@ -8,6 +8,7 @@ It runs as a normal web page and as an installable iPhone web app (PWA).
 - Data: [transport.opendata.ch](https://transport.opendata.ch) (`/v1/stationboard`, `/v1/locations`), no API key needed.
   Timetable data: opentransportdata.swiss.
 - Settings (gear button): stop, lines, destinations, vehicle types, number of rows. Stored in the browser.
+- Quick selection (list button or tap on the stop title): the last used stops with their filters, removable one by one. Stored in the browser (`localStorage`), nothing leaves the device.
 
 ## Deploy with GitHub Pages
 

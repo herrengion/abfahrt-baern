@@ -127,7 +127,7 @@
   }
 
   /* Settings */
-  #gear {
+  #gear, #quick {
     position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom));
     width: 56px; height: 56px; border-radius: 50%;
     border: 1px solid #8a8a90; background: #34343a; color: #f0f0f2;
@@ -135,7 +135,9 @@
     box-shadow: 0 2px 10px rgba(0, 0, 0, .5);
     opacity: .75; transition: opacity .2s, background .2s;
   }
-  #gear:hover, #gear:focus-visible { opacity: 1; background: #44444b; }
+  #quick { right: calc(max(16px, env(safe-area-inset-right)) + 68px); font-size: 26px; }
+  #gear:hover, #gear:focus-visible, #quick:hover, #quick:focus-visible { opacity: 1; background: #44444b; }
+  .stop { cursor: pointer; }
   dialog {
     width: min(92vw, 420px); padding: 20px 22px;
     border: 1px solid #55555a; border-radius: 12px;
@@ -152,6 +154,13 @@
   dialog legend { padding: 0 4px; font-size: 13px; color: #b5b5ba; }
   dialog .check { display: inline-flex; align-items: center; gap: 6px; margin: 0 14px 0 0; font-size: 14px; color: #e6e6e8; }
   dialog .hint { margin: 0 0 14px; font-size: 12px; color: #8c8c90; }
+  dialog .quick { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; }
+  dialog .quick li { display: flex; gap: 6px; }
+  dialog .quick .pick { flex: 1; text-align: left; font-size: 16px; padding: 12px 14px; }
+  dialog .quick .pick small { display: block; margin-top: 2px; font-size: 12px; color: #8c8c90; }
+  dialog .quick .pick.current { border-color: var(--amber); }
+  dialog .quick .pick.current::before { content: "\25CF "; color: var(--amber); }
+  dialog .quick .del { width: 48px; font-size: 20px; line-height: 1; padding: 0; }
   dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
   dialog button { padding: 8px 14px; border-radius: 6px; border: 1px solid #55555a; background: #2c2c30; color: #fff; font: inherit; cursor: pointer; }
   dialog button.primary { background: var(--amber); border-color: var(--amber); color: #1a1100; font-weight: 600; }
@@ -176,6 +185,18 @@
   </main>
 
   <button id="gear" type="button" aria-label="Einstellungen" title="Einstellungen">&#9881;</button>
+
+  <button id="quick" type="button" aria-label="Schnellwahl Haltestellen" title="Schnellwahl">&#9776;</button>
+
+  <dialog id="quickDialog">
+    <h2>Schnellwahl</h2>
+    <ul class="quick" id="quickList"></ul>
+    <p class="hint" id="quickEmpty" hidden>Noch keine Haltestellen gespeichert. Gew&auml;hlte Haltestellen erscheinen hier automatisch.</p>
+    <div class="actions">
+      <button type="button" id="quickClear">Liste leeren</button>
+      <button type="button" id="quickClose" class="primary">Schliessen</button>
+    </div>
+  </dialog>
 
   <dialog id="settings">
     <form id="settingsForm">
@@ -264,6 +285,48 @@
   }
 
   let cfg = loadConfig();
+
+  // ---------- recently used stops (quick selection) ----------
+
+  const RECENT_KEY = 'bern-departures-recent-v1';
+  const MAX_RECENT = 8;
+
+  function loadRecent() {
+    try {
+      const list = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+      if (!Array.isArray(list)) return [];
+      return list
+        .map((e) => (typeof e === 'string' ? { name: e } : e))
+        .filter((e) => e && typeof e.name === 'string' && e.name.trim())
+        .map((e) => ({
+          name: e.name.trim().slice(0, 80),
+          lines: typeof e.lines === 'string' ? e.lines.slice(0, 80) : '',
+          dests: typeof e.dests === 'string' ? e.dests.slice(0, 80) : '',
+        }))
+        .slice(0, MAX_RECENT);
+    } catch { return []; }
+  }
+
+  let recent = loadRecent();
+
+  function saveRecent() {
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch { /* ignore */ }
+  }
+
+  const sameStop = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+
+  // An entry remembers the stop together with its line/destination filters.
+  function addRecent(name, lines, dests) {
+    const clean = String(name || '').trim().slice(0, 80);
+    if (!clean) return;
+    const entry = { name: clean, lines: String(lines || '').slice(0, 80), dests: String(dests || '').slice(0, 80) };
+    recent = [entry, ...recent.filter((e) => !sameStop(e.name, clean))].slice(0, MAX_RECENT);
+    saveRecent();
+  }
+
+  // A stop is remembered once the API has confirmed it (so typos never end up in the list) and under the
+  // name the API resolved. It is only added after the user picked it, or when the list is still empty.
+  let pendingRecord = recent.length === 0 && !cfg.demo;
 
   // ---------- data ----------
 
@@ -734,6 +797,10 @@
       }
       state.updatedAt = Date.now();
       state.failures = 0;
+      if (pendingRecord && state.stationName) {
+        addRecent(state.stationName, cfg.lines, cfg.dests);
+        pendingRecord = false;
+      }
       applyTitle();
     } catch (err) {
       state.failures += 1;
@@ -765,27 +832,99 @@
   $('gear').addEventListener('click', openSettings);
   $('cancel').addEventListener('click', () => dialog.close());
 
+  // Apply a new configuration: save it, drop old data and reload the board.
+  function commitConfig(next) {
+    cfg = next;
+    saveConfig(cfg);
+    state.items = [];
+    state.stationName = null;
+    state.updatedAt = null;
+    state.failures = 0;
+    state.loading = true;
+    pendingRecord = true;
+    if (cfg.demo) {   // demo data has no API answer that could confirm the name
+      addRecent(cfg.station, cfg.lines, cfg.dests);
+      pendingRecord = false;
+    }
+    applyConfig();
+    render();
+    refresh();
+  }
+
   $('settingsForm').addEventListener('submit', (e) => {
     e.preventDefault();
     const modes = [...document.querySelectorAll('input[name=mode]:checked')].map((b) => b.value);
-    cfg = {
+    dialog.close();
+    commitConfig({
       station: $('fStation').value.trim() || DEFAULTS.station,
       lines: $('fLines').value.trim(),
       dests: $('fDests').value.trim(),
       modes: modes.length ? modes : DEFAULTS.modes,
       rows: clampInt($('fRows').value, 1, 8, DEFAULTS.rows),
       demo: $('fDemo').checked,
-    };
-    saveConfig(cfg);
-    dialog.close();
-    state.items = [];
-    state.stationName = null;
-    state.updatedAt = null;
-    state.failures = 0;
-    state.loading = true;
-    applyConfig();
-    render();
-    refresh();
+    });
+  });
+
+  // ---------- quick selection dialog ----------
+
+  const quickDialog = $('quickDialog');
+
+  function renderQuick() {
+    const items = recent.map(({ name, lines, dests }) => {
+      const li = document.createElement('li');
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'pick';
+      pick.dataset.station = name;
+      pick.textContent = stopTitle(name) || name;
+      const filters = [lines && 'Linien ' + lines, dests && 'Ziele ' + dests].filter(Boolean).join(' \u00B7 ');
+      if (filters) {
+        const note = document.createElement('small');
+        note.textContent = filters;
+        pick.append(note);
+      }
+      const current = sameStop(name, cfg.station) || (state.stationName && sameStop(name, state.stationName));
+      if (current) pick.classList.add('current');
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'del';
+      del.dataset.station = name;
+      del.textContent = '\u00D7';
+      del.setAttribute('aria-label', (stopTitle(name) || name) + ' entfernen');
+      li.append(pick, del);
+      return li;
+    });
+    $('quickList').replaceChildren(...items);
+    $('quickEmpty').hidden = items.length > 0;
+    $('quickClear').disabled = items.length === 0;
+  }
+
+  function openQuick() {
+    renderQuick();
+    quickDialog.showModal();
+  }
+
+  $('quick').addEventListener('click', openQuick);
+  $('stop').addEventListener('click', openQuick);
+  $('quickClose').addEventListener('click', () => quickDialog.close());
+  $('quickClear').addEventListener('click', () => {
+    recent = [];
+    saveRecent();
+    renderQuick();
+  });
+  $('quickList').addEventListener('click', (e) => {
+    const button = e.target.closest('button');
+    if (!button) return;
+    const name = button.dataset.station;
+    if (button.classList.contains('del')) {
+      recent = recent.filter((e) => e.name !== name);
+      saveRecent();
+      renderQuick();
+    } else if (button.classList.contains('pick')) {
+      quickDialog.close();
+      const entry = recent.find((e) => e.name === name);
+      commitConfig({ ...cfg, station: name, lines: entry ? entry.lines : '', dests: entry ? entry.dests : '' });
+    }
   });
 
   // Station name autocomplete (debounced, to stay friendly to the shared API).
