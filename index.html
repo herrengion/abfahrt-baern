@@ -44,16 +44,20 @@
   .wrap {
     width: min(var(--maxw), 1100px, max(min(var(--maxw), 420px), calc((100dvh - 48px) * 100 / (28.7 + 8.7 * var(--rows)))));
     margin: auto;
+    position: relative;
     container-type: inline-size;
   }
-  .sign { display: flex; flex-direction: column; filter: drop-shadow(0 2cqw 3cqw rgba(0, 0, 0, .55)); }
+  .sign { display: flex; flex-direction: column; will-change: transform, opacity; }
+  /* Snapshot of the previous sign, slid out while the new one slides in (see selectStop). */
+  .ghost { position: absolute; left: 0; right: 0; pointer-events: none; will-change: transform, opacity; }
+  html.swiping, html.swiping body { overflow: hidden; }
 
   .housing {
     /* Brushed silver aluminium: lighter than the page background so the sign still stands out. */
     background:
       linear-gradient(180deg, rgba(255, 255, 255, .45) 0, rgba(255, 255, 255, 0) 9%, rgba(0, 0, 0, 0) 90%, rgba(0, 0, 0, .22) 100%),
       linear-gradient(100deg, #a4a8ad 0%, #b9bcc0 30%, #9fa3a8 55%, #b2b5b9 80%, #979ba0 100%);
-    box-shadow: inset 0 0 0 .2cqw rgba(255, 255, 255, .28), inset 0 0 0 .5cqw rgba(60, 63, 68, .35);
+    box-shadow: inset 0 0 0 .2cqw rgba(255, 255, 255, .28), inset 0 0 0 .5cqw rgba(60, 63, 68, .35), 0 2cqw 3cqw rgba(0, 0, 0, .55);
     padding: 4.2cqw .8cqw 4.8cqw;
     border-radius: .8cqw;
   }
@@ -149,11 +153,6 @@
   /* Vertical swipes switch the stop; when the whole sign fits the screen the page itself never scrolls. */
   html { overscroll-behavior-y: none; }
   html.fits, html.fits body { touch-action: pan-x; }
-  @keyframes slide-next { from { transform: translateY(4cqw); opacity: .35; } to { transform: none; opacity: 1; } }
-  @keyframes slide-prev { from { transform: translateY(-4cqw); opacity: .35; } to { transform: none; opacity: 1; } }
-  .sign.slide-next { animation: slide-next .28s ease-out; }
-  .sign.slide-prev { animation: slide-prev .28s ease-out; }
-  @media (prefers-reduced-motion: reduce) { .sign.slide-next, .sign.slide-prev { animation: none; } }
 
   .meta {
     margin: 2.4cqw 0 0;
@@ -841,6 +840,10 @@
   // still running (quick switching between stops), the late answer belongs to the old stop and is dropped.
   let refreshGen = 0;
 
+  // Last board per stop: switching between saved stops shows it at once (instead of an empty sign) until the fresh data arrives.
+  const boardCache = new Map();
+  const CACHE_MAX_AGE_MS = 10 * 60_000;
+
   async function refresh() {
     clearTimeout(pollTimer);
     if (document.hidden) {
@@ -863,6 +866,9 @@
       state.stationName = board.stationName;
       state.updatedAt = Date.now();
       state.failures = 0;
+      const snapshot = { items: board.items, stationName: board.stationName, updatedAt: state.updatedAt };
+      boardCache.set(requested.station, snapshot);
+      if (board.stationName) boardCache.set(board.stationName, snapshot);
       if (pendingRecord && state.stationName) {
         addRecent(state.stationName, requested.lines, requested.dests, requested.rows);
         pendingRecord = false;
@@ -1023,14 +1029,31 @@
     return at;
   }
 
-  // dir: 1 = next (slides up), -1 = previous, 0 = no animation.
+  // dir: 1 = next (new sign slides in from below), -1 = previous (from above), 0 = no animation.
+  // The old sign is cloned and slid out while the new one slides in; only transform and opacity are animated.
+  let swipeAnims = [];
+  function endSwipe() {
+    swipeAnims.forEach((a) => a.cancel());
+    swipeAnims = [];
+    document.querySelectorAll('.ghost').forEach((g) => g.remove());
+    document.documentElement.classList.remove('swiping');
+  }
+
   function selectStop(entry, dir) {
     if (!entry) return;
     const sign = document.querySelector('.sign');
-    sign.classList.remove('slide-next', 'slide-prev');
-    if (dir) {
-      void sign.offsetWidth;   // restart the animation
-      sign.classList.add(dir > 0 ? 'slide-next' : 'slide-prev');
+    endSwipe();
+    let ghost = null;
+    let distance = 0;
+    if (dir && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      distance = Math.round(Math.min(window.innerHeight * 0.45, sign.offsetHeight));
+      ghost = sign.cloneNode(true);
+      ghost.classList.add('ghost');
+      ghost.setAttribute('aria-hidden', 'true');
+      ghost.inert = true;
+      ghost.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+      ghost.style.top = sign.offsetTop + 'px';
+      sign.before(ghost);
     }
     commitConfig({
       ...cfg,
@@ -1039,6 +1062,24 @@
       dests: entry.dests,
       rows: entry.rows ? entry.rows : cfg.rows,
     });
+    const cached = boardCache.get(entry.name);
+    if (cached && Date.now() - cached.updatedAt < CACHE_MAX_AGE_MS) {
+      state.items = cached.items;
+      state.stationName = cached.stationName;
+      state.updatedAt = cached.updatedAt;
+      state.loading = false;
+      applyTitle();
+      render();
+    }
+    if (!ghost) return;
+    document.documentElement.classList.add('swiping');
+    const timing = { duration: 380, easing: 'cubic-bezier(.2, .7, .2, 1)', fill: 'both' };
+    const out = ghost.animate(
+      [{ transform: 'translateY(0)', opacity: 1 }, { transform: `translateY(${-dir * distance}px)`, opacity: 0 }], timing);
+    const into = sign.animate(
+      [{ transform: `translateY(${dir * distance}px)`, opacity: 0 }, { transform: 'translateY(0)', opacity: 1 }], timing);
+    swipeAnims = [out, into];
+    into.onfinish = endSwipe;
   }
 
   function stepStop(dir) {
