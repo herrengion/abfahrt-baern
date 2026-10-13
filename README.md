@@ -2,7 +2,7 @@
 
 A private, single-page replica of a "Tramli"-style departure display for stops in Bern, styled like the
 Bernmobil stop signs (amber dot-matrix rows, bus pictogram when a vehicle is due, ticker for long destinations).
-It runs as a normal web page and as an installable iPhone web app (PWA).
+It runs as a normal web page and as an installable web app (PWA) on iPhone and Android.
 
 - No build step, no dependencies: `index.html` is the whole app.
 - Data: [transport.opendata.ch](https://transport.opendata.ch) (`/v1/stationboard`, `/v1/locations`), no API key needed.
@@ -16,11 +16,35 @@ It runs as a normal web page and as an installable iPhone web app (PWA).
 2. Repository **Settings → Pages → Build and deployment**: Source **Deploy from a branch**, Branch **main**, folder **/ (root)**.
 3. After a minute the app is available at `https://<your-user>.github.io/<repository>/`.
 
-## Install on iPhone
+## Install on your phone
 
-Open the Pages address in **Safari** → Share button → **Add to Home Screen**.
-Launch it from the home screen icon to get the full-screen app without browser bars.
-Tip: Settings → Display & Brightness → Auto-Lock → Never, if the screen should stay on.
+Open the Pages address (`https://<your-user>.github.io/<repository>/`) and add it to the home screen.
+Launch it from the new icon to get the full-screen app without browser bars.
+
+### iPhone (Safari)
+
+1. Open the address in **Safari** (other iOS browsers may not offer the option).
+2. Tap the **Share** button (square with an arrow).
+3. Choose **Add to Home Screen** and confirm with **Add**.
+4. Optional: Settings → Display & Brightness → Auto-Lock → **Never**, if the screen should stay on.
+
+### Android (Chrome)
+
+1. Open the address in **Chrome**.
+2. Tap the **menu** (⋮ at the top right).
+3. Choose **Install app** (or **Add to Home screen** if the first entry is missing) and confirm.
+4. Optional: Settings → Display → Screen timeout, if the screen should stay on longer. While the app is in
+   the foreground it requests a wake lock, so the screen normally stays on anyway.
+
+Other browsers (Firefox, Samsung Internet, ...) can open the page too, but the install entry is named
+differently or may be missing; Chrome is the most reliable choice on Android.
+
+### Notes
+
+- Settings and the quick selection are stored per device and browser. A second device needs to be set up once.
+- The first start needs internet (data and the dot-matrix font). Afterwards the app shell starts offline,
+  but departures always need a connection.
+- To update, close the app completely and open it again; the new version is picked up in the background.
 
 ## URL parameters
 
