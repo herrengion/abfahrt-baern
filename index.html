@@ -24,6 +24,7 @@
     --sans: "Frutiger", "Inter", "Helvetica Neue", Arial, system-ui, sans-serif;
     --dots: "Doto", "DotGothic16", ui-monospace, "Courier New", monospace;
     --rows: 4;
+    --maxw: 94vw;
   }
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -41,7 +42,7 @@
   /* Width is also limited by the height, so the whole sign stays visible (even with many rows): the sign is about
      (28.7 + 8.7 * rows) cqw high. With very many rows the sign keeps a minimum width and the page scrolls. */
   .wrap {
-    width: min(94vw, 1100px, max(min(94vw, 420px), calc((100dvh - 32px) * 100 / (28.7 + 8.7 * var(--rows)))));
+    width: min(var(--maxw), 1100px, max(min(var(--maxw), 420px), calc((100dvh - 48px) * 100 / (28.7 + 8.7 * var(--rows)))));
     margin: auto;
     container-type: inline-size;
   }
@@ -125,6 +126,35 @@
   }
   .row.note .dest { grid-column: 2 / 4; }
 
+  /* Page dots on the right edge, stacked vertically: they show that the saved stops can be swiped up and down.
+     The current stop is highlighted. */
+  .dots {
+    position: fixed; z-index: 5;
+    right: calc(env(safe-area-inset-right) + 2px); top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .dots[hidden] { display: none; }
+  .dots button {
+    position: relative; width: 28px; height: 28px; padding: 0; border: 0; background: none; cursor: pointer;
+  }
+  .dots button::after {
+    content: ""; position: absolute; left: 50%; top: 50%; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px;
+    border-radius: 50%; background: #6a6a70; transition: all .2s;
+  }
+  .dots button[aria-current="true"]::after {
+    width: 12px; height: 12px; margin: -6px 0 0 -6px; background: var(--amber); box-shadow: 0 0 8px var(--amber-glow);
+  }
+  /* With dots, the sign leaves a gutter on both sides (keeps it centered). */
+  html.has-dots { --maxw: calc(100vw - 60px - env(safe-area-inset-left) - env(safe-area-inset-right)); }
+  /* Vertical swipes switch the stop; when the whole sign fits the screen the page itself never scrolls. */
+  html { overscroll-behavior-y: none; }
+  html.fits, html.fits body { touch-action: pan-x; }
+  @keyframes slide-next { from { transform: translateY(4cqw); opacity: .35; } to { transform: none; opacity: 1; } }
+  @keyframes slide-prev { from { transform: translateY(-4cqw); opacity: .35; } to { transform: none; opacity: 1; } }
+  .sign.slide-next { animation: slide-next .28s ease-out; }
+  .sign.slide-prev { animation: slide-prev .28s ease-out; }
+  @media (prefers-reduced-motion: reduce) { .sign.slide-next, .sign.slide-prev { animation: none; } }
+
   .meta {
     margin: 2.4cqw 0 0;
     text-align: center;
@@ -188,6 +218,7 @@
         </div>
       </div>
     </div>
+    <div class="dots" id="dots" role="group" aria-label="Gespeicherte Haltestellen" hidden></div>
     <p class="meta" id="meta"></p>
   </main>
 
@@ -326,6 +357,7 @@
 
   function saveRecent() {
     try { localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch { /* ignore */ }
+    renderDots();
   }
 
   const sameStop = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
@@ -340,7 +372,10 @@
       dests: String(dests || '').slice(0, 80),
       rows: storedRows(rows),
     };
-    recent = [entry, ...recent.filter((e) => !sameStop(e.name, clean))].slice(0, MAX_RECENT);
+    // A known stop keeps its position (the swipe order must stay stable); a new one goes to the front.
+    const at = recent.findIndex((e) => sameStop(e.name, clean));
+    if (at >= 0) recent = recent.map((e, i) => (i === at ? entry : e));
+    else recent = [entry, ...recent].slice(0, MAX_RECENT);
     saveRecent();
   }
 
@@ -789,16 +824,22 @@
     const title = stopTitle(state.stationName || cfg.station);
     $('stop').textContent = title;
     document.title = 'Abfahrten ' + title;
+    renderDots();
   }
 
   function applyConfig() {
     applyTitle();
     document.documentElement.style.setProperty('--rows', String(cfg.rows));
+    updateFits();
   }
 
   // ---------- polling ----------
 
   let pollTimer = 0;
+
+  // Every refresh works on a snapshot of the configuration. If the configuration changes while a request is
+  // still running (quick switching between stops), the late answer belongs to the old stop and is dropped.
+  let refreshGen = 0;
 
   async function refresh() {
     clearTimeout(pollTimer);
@@ -806,29 +847,30 @@
       pollTimer = setTimeout(refresh, POLL_MS);
       return;
     }
+    const gen = ++refreshGen;
+    const requested = cfg;
+    let board = null;
     try {
-      if (cfg.demo) {
-        state.items = demoItems(Date.now());
-        state.stationName = null;
-      } else {
-        const board = await loadBoard(cfg);
-        state.items = board.items;
-        state.stationName = board.stationName;
-      }
+      board = requested.demo ? { items: demoItems(Date.now()), stationName: null } : await loadBoard(requested);
+    } catch (err) {
+      if (gen === refreshGen) state.failures += 1;
+      console.warn('Refresh failed:', err);
+    }
+    if (gen !== refreshGen) return;   // superseded by a newer refresh: it takes over rendering and polling
+
+    if (board) {
+      state.items = board.items;
+      state.stationName = board.stationName;
       state.updatedAt = Date.now();
       state.failures = 0;
       if (pendingRecord && state.stationName) {
-        addRecent(state.stationName, cfg.lines, cfg.dests, cfg.rows);
+        addRecent(state.stationName, requested.lines, requested.dests, requested.rows);
         pendingRecord = false;
       }
       applyTitle();
-    } catch (err) {
-      state.failures += 1;
-      console.warn('Refresh failed:', err);
-    } finally {
-      state.loading = false;
-      render();
     }
+    state.loading = false;
+    render();
     const delay = state.failures
       ? Math.min(15_000 * 2 ** (state.failures - 1), MAX_BACKOFF_MS)
       : POLL_MS;
@@ -969,16 +1011,102 @@
       renderQuick();
     } else if (button.classList.contains('pick')) {
       quickDialog.close();
-      const entry = recent.find((e) => e.name === name);
-      commitConfig({
-        ...cfg,
-        station: name,
-        lines: entry ? entry.lines : '',
-        dests: entry ? entry.dests : '',
-        rows: entry && entry.rows ? entry.rows : cfg.rows,
-      });
+      selectStop(recent.find((e) => e.name === name), 0);
     }
   });
+
+  // ---------- switching between the saved stops (swipe up/down, arrow keys, page dots) ----------
+
+  function currentIndex() {
+    let at = recent.findIndex((e) => sameStop(e.name, cfg.station));
+    if (at < 0 && state.stationName) at = recent.findIndex((e) => sameStop(e.name, state.stationName));
+    return at;
+  }
+
+  // dir: 1 = next (slides up), -1 = previous, 0 = no animation.
+  function selectStop(entry, dir) {
+    if (!entry) return;
+    const sign = document.querySelector('.sign');
+    sign.classList.remove('slide-next', 'slide-prev');
+    if (dir) {
+      void sign.offsetWidth;   // restart the animation
+      sign.classList.add(dir > 0 ? 'slide-next' : 'slide-prev');
+    }
+    commitConfig({
+      ...cfg,
+      station: entry.name,
+      lines: entry.lines,
+      dests: entry.dests,
+      rows: entry.rows ? entry.rows : cfg.rows,
+    });
+  }
+
+  function stepStop(dir) {
+    if (recent.length < 2) return;
+    const at = currentIndex();
+    const next = at < 0 ? (dir > 0 ? 0 : recent.length - 1) : (at + dir + recent.length) % recent.length;
+    selectStop(recent[next], dir);
+  }
+
+  function renderDots() {
+    const box = $('dots');
+    const current = currentIndex();
+    box.hidden = recent.length < 2;
+    document.documentElement.classList.toggle('has-dots', recent.length >= 2);
+    box.replaceChildren(...recent.map((entry, i) => {
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.dataset.index = String(i);
+      dot.setAttribute('aria-label', stopTitle(entry.name) || entry.name);
+      dot.setAttribute('aria-current', String(i === current));
+      return dot;
+    }));
+  }
+
+  $('dots').addEventListener('click', (e) => {
+    const dot = e.target.closest('button');
+    if (!dot) return;
+    const at = Number(dot.dataset.index);
+    const current = currentIndex();
+    if (at !== current) selectStop(recent[at], at > current ? 1 : -1);
+  });
+
+  // Swipe: mostly vertical, long enough, quick enough. Finger moves up -> next stop.
+  let swipe = null;
+  let swiped = false;
+  document.addEventListener('pointerdown', (e) => {
+    swipe = e.isPrimary && !e.target.closest('dialog, button, input, a') && !document.querySelector('dialog[open]')
+      ? { x: e.clientX, y: e.clientY, t: Date.now() }
+      : null;
+  });
+  document.addEventListener('pointerup', (e) => {
+    const start = swipe;
+    swipe = null;
+    if (!start) return;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    if (Math.abs(dy) < 50 || Math.abs(dy) < 1.5 * Math.abs(dx) || Date.now() - start.t > 900) return;
+    if (!document.documentElement.classList.contains('fits')) return;   // tall page: vertical drags scroll
+    swiped = true;   // swallow the click that follows (e.g. on the stop title)
+    setTimeout(() => { swiped = false; }, 400);
+    stepStop(dy < 0 ? 1 : -1);
+  });
+  document.addEventListener('pointercancel', () => { swipe = null; });
+  document.addEventListener('click', (e) => { if (swiped) { e.stopPropagation(); e.preventDefault(); } }, true);
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.target.closest('dialog, input, select, textarea')
+        && !document.querySelector('dialog[open]')) {
+      e.preventDefault();
+      stepStop(e.key === 'ArrowDown' ? 1 : -1);
+    }
+  });
+
+  // Does the whole page fit the window? Then vertical swipes are free to switch stops.
+  function updateFits() {
+    const root = document.documentElement;
+    root.classList.toggle('fits', root.scrollHeight <= window.innerHeight + 1);
+  }
+  window.addEventListener('resize', updateFits);
 
   // Station name autocomplete (debounced, to stay friendly to the shared API).
   let acTimer = 0;
@@ -1045,6 +1173,7 @@
       lastWidth = width;
       remeasureAll();
     }
+    updateFits();
   }).observe(document.querySelector('.wrap'));
 
   // Offline-capable app shell (only over http(s); skipped for file:// previews).
