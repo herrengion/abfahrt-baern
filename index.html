@@ -1086,8 +1086,11 @@
     into.onfinish = endSwipe;
   }
 
+  let lastStepAt = 0;
   function stepStop(dir) {
     if (recent.length < 2) return;
+    if (Date.now() - lastStepAt < 80) return;   // one gesture, one step (events of the same gesture must not add up)
+    lastStepAt = Date.now();
     const at = currentIndex();
     const next = at < 0 ? (dir > 0 ? 0 : recent.length - 1) : (at + dir + recent.length) % recent.length;
     selectStop(recent[next], dir);
@@ -1145,13 +1148,15 @@
   let touch = null;
   document.addEventListener('touchstart', (e) => {
     touch = e.touches.length === 1 && !e.target.closest('dialog, button, input, a') && !document.querySelector('dialog[open]')
-      ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now(), top: window.scrollY, max: scrollMax() }
+      ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now(), top: window.scrollY, max: scrollMax(), fits: document.documentElement.classList.contains('fits') }
       : null;
   }, { passive: true });
   document.addEventListener('touchend', (e) => {
     const start = touch;
     touch = null;
-    if (!start || document.documentElement.classList.contains('fits')) return;   // fitting page: pointer events handle it
+    // A page that fitted when the touch began is handled by the pointer events. Checking the start state (not the current one)
+    // matters: the pointer handler may already have switched to a tall stop, and this must not switch a second time.
+    if (!start || start.fits) return;
     const dx = e.changedTouches[0].clientX - start.x;
     const dy = e.changedTouches[0].clientY - start.y;
     if (Math.abs(dy) < 50 || Math.abs(dy) < 1.5 * Math.abs(dx) || Date.now() - start.t > 900) return;
