@@ -7,8 +7,9 @@ It runs as a normal web page and as an installable web app (PWA) on iPhone and A
 - No build step, no dependencies: `index.html` is the whole app.
 - Data: [transport.opendata.ch](https://transport.opendata.ch) (`/v1/stationboard`, `/v1/locations`), no API key needed.
   Timetable data: opentransportdata.swiss.
-- Settings (gear button): stop, lines, destinations, vehicle types, number of rows (1-30). Stored in the browser.
-- Quick selection (list button or tap on the stop title): the last used stops with their filters and their own number of rows (e.g. 4 for a small stop, 16 for Bern Bahnhof), removable one by one; the row count can be edited right in the list.
+- Menu (round button, bottom right): opens "Haltestellen" (quick selection) and "Einstellungen" (settings).
+- Settings: stop, lines, destinations, vehicle types, number of rows (1-30). Stored in the browser.
+- Quick selection (menu or tap on the stop title): the last used stops with their filters and their own number of rows (e.g. 4 for a small stop, 16 for Bern Bahnhof), removable one by one; the row count can be edited right in the list.
 - Switching between the saved stops: swipe up/down on the sign (or arrow up/down, or tap a page dot on the right edge). The order of the list is fixed, new stops are added at the front. Swiping is only active while the whole sign fits on the screen. Stored in the browser (`localStorage`), nothing leaves the device.
 
 ## Deploy with GitHub Pages
