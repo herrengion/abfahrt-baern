@@ -25,14 +25,18 @@
     --dots: "Doto", "DotGothic16", ui-monospace, "Courier New", monospace;
     --rows: 4;
     --maxw: 94vw;
+    --reserve: 0px;   /* bottom strip kept free for the round buttons (portrait only, see below) */
   }
+  /* In portrait the sign fills the screen width and can be tall, so the round buttons would cover its bottom rows
+     and the footer line: keep a strip below the sign for them. In landscape they fit beside the sign. */
+  @media (orientation: portrait) { :root { --reserve: 68px; } }
   * { box-sizing: border-box; }
   html { height: 100%; }
   body {
     margin: 0;
     min-height: 100%;
     display: grid;
-    padding: max(16px, env(safe-area-inset-top)) env(safe-area-inset-right) max(16px, env(safe-area-inset-bottom)) env(safe-area-inset-left);
+    padding: max(16px, env(safe-area-inset-top)) env(safe-area-inset-right) calc(max(16px, env(safe-area-inset-bottom)) + var(--reserve)) env(safe-area-inset-left);
     background: radial-gradient(120% 90% at 50% 40%, #3b3b3e 0%, #1c1c1e 70%);
     color: #ddd;
     font-family: var(--sans);
@@ -42,7 +46,7 @@
   /* Width is also limited by the height, so the whole sign stays visible (even with many rows): the sign is about
      (28.7 + 8.7 * rows) cqw high. With very many rows the sign keeps a minimum width and the page scrolls. */
   .wrap {
-    width: min(var(--maxw), 1100px, max(min(var(--maxw), 420px), calc((100dvh - 48px) * 100 / (28.7 + 8.7 * var(--rows)))));
+    width: min(var(--maxw), 1100px, max(min(var(--maxw), 420px), calc((100dvh - 48px - var(--reserve)) * 100 / (28.7 + 8.7 * var(--rows)))));
     margin: auto;
     position: relative;
     container-type: inline-size;
