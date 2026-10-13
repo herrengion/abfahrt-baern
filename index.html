@@ -26,10 +26,11 @@
     --rows: 4;
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
+  html { height: 100%; }
   body {
+    margin: 0;
+    min-height: 100%;
     display: grid;
-    place-items: center;
     padding: max(16px, env(safe-area-inset-top)) env(safe-area-inset-right) max(16px, env(safe-area-inset-bottom)) env(safe-area-inset-left);
     background: radial-gradient(120% 90% at 50% 40%, #3b3b3e 0%, #1c1c1e 70%);
     color: #ddd;
@@ -37,8 +38,13 @@
   }
 
   /* Everything inside .wrap is sized in container units, so the sign scales to any screen. */
-  /* Width is also limited by the height, so the whole sign stays visible on a phone held in landscape. */
-  .wrap { width: min(94vw, 1100px, calc((100dvh - 90px) * 1.6)); container-type: inline-size; }
+  /* Width is also limited by the height, so the whole sign stays visible (even with many rows): the sign is about
+     (28.7 + 8.7 * rows) cqw high. With very many rows the sign keeps a minimum width and the page scrolls. */
+  .wrap {
+    width: min(94vw, 1100px, max(min(94vw, 420px), calc((100dvh - 32px) * 100 / (28.7 + 8.7 * var(--rows)))));
+    margin: auto;
+    container-type: inline-size;
+  }
   .sign { display: flex; flex-direction: column; filter: drop-shadow(0 2cqw 3cqw rgba(0, 0, 0, .55)); }
 
   .housing {
@@ -160,6 +166,7 @@
   dialog .quick .pick small { display: block; margin-top: 2px; font-size: 12px; color: #8c8c90; }
   dialog .quick .pick.current { border-color: var(--amber); }
   dialog .quick .pick.current::before { content: "\25CF "; color: var(--amber); }
+  dialog .quick input.count { width: 64px; margin: 0; padding: 0 6px; text-align: center; font-size: 16px; }
   dialog .quick .del { width: 48px; font-size: 20px; line-height: 1; padding: 0; }
   dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
   dialog button { padding: 8px 14px; border-radius: 6px; border: 1px solid #55555a; background: #2c2c30; color: #fff; font: inherit; cursor: pointer; }
@@ -191,6 +198,7 @@
   <dialog id="quickDialog">
     <h2>Schnellwahl</h2>
     <ul class="quick" id="quickList"></ul>
+    <p class="hint">Die Zahl rechts neben jeder Haltestelle ist die Anzahl Zeilen, die für sie angezeigt wird.</p>
     <p class="hint" id="quickEmpty" hidden>Noch keine Haltestellen gespeichert. Gew&auml;hlte Haltestellen erscheinen hier automatisch.</p>
     <div class="actions">
       <button type="button" id="quickClear">Liste leeren</button>
@@ -217,8 +225,8 @@
         <label class="check"><input type="checkbox" name="mode" value="bus"> Bus</label>
         <label class="check"><input type="checkbox" name="mode" value="train"> Zug</label>
       </fieldset>
-      <label>Anzahl Zeilen (1&ndash;8)
-        <input id="fRows" type="number" min="1" max="8">
+      <label>Anzahl Zeilen (1&ndash;30)
+        <input id="fRows" type="number" min="1" max="30">
       </label>
       <label class="check"><input id="fDemo" type="checkbox"> Demo-Daten statt Live-Daten</label>
       <p class="hint">Taste <b>F</b> oder Doppelklick auf die Anzeige: Vollbild.</p>
@@ -245,6 +253,7 @@
   const POLL_MS = 30_000;           // real-time data only changes about every 30 s, so don't poll faster
   const MAX_BACKOFF_MS = 300_000;
   const STORE_KEY = 'bern-departures-config-v1';
+  const MAX_ROWS = 30;
   const DEFAULTS = {
     station: 'Bern, Zytglogge',
     lines: '',
@@ -275,7 +284,7 @@
     if (q.has('modes')) cfg.modes = q.get('modes').split(',').map((s) => s.trim()).filter(Boolean);
     if (q.has('rows')) cfg.rows = q.get('rows');
     if (q.has('demo')) cfg.demo = q.get('demo') !== '0';
-    cfg.rows = clampInt(cfg.rows, 1, 8, DEFAULTS.rows);
+    cfg.rows = clampInt(cfg.rows, 1, MAX_ROWS, DEFAULTS.rows);
     if (!Array.isArray(cfg.modes) || !cfg.modes.length) cfg.modes = DEFAULTS.modes;
     return cfg;
   }
@@ -291,6 +300,11 @@
   const RECENT_KEY = 'bern-departures-recent-v1';
   const MAX_RECENT = 8;
 
+  const storedRows = (value) => {
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) && n >= 1 ? Math.min(MAX_ROWS, n) : 0;
+  };
+
   function loadRecent() {
     try {
       const list = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
@@ -302,6 +316,7 @@
           name: e.name.trim().slice(0, 80),
           lines: typeof e.lines === 'string' ? e.lines.slice(0, 80) : '',
           dests: typeof e.dests === 'string' ? e.dests.slice(0, 80) : '',
+          rows: storedRows(e.rows),   // 0 = not stored (old entries): keep the current setting
         }))
         .slice(0, MAX_RECENT);
     } catch { return []; }
@@ -315,11 +330,16 @@
 
   const sameStop = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 
-  // An entry remembers the stop together with its line/destination filters.
-  function addRecent(name, lines, dests) {
+  // An entry remembers the stop together with its line/destination filters and its number of rows.
+  function addRecent(name, lines, dests, rows) {
     const clean = String(name || '').trim().slice(0, 80);
     if (!clean) return;
-    const entry = { name: clean, lines: String(lines || '').slice(0, 80), dests: String(dests || '').slice(0, 80) };
+    const entry = {
+      name: clean,
+      lines: String(lines || '').slice(0, 80),
+      dests: String(dests || '').slice(0, 80),
+      rows: storedRows(rows),
+    };
     recent = [entry, ...recent.filter((e) => !sameStop(e.name, clean))].slice(0, MAX_RECENT);
     saveRecent();
   }
@@ -479,7 +499,7 @@
     const url = new URL(API + '/stationboard');
     url.searchParams.set('station', c.station);
     // Ask for more than we show, because line/destination filters are applied client-side.
-    url.searchParams.set('limit', String(Math.min(60, c.rows * 8 + 8)));
+    url.searchParams.set('limit', String(Math.min(120, c.rows * 8 + 8)));
     for (const m of c.modes) url.searchParams.append('transportations[]', m);
 
     const ctrl = new AbortController();
@@ -798,7 +818,7 @@
       state.updatedAt = Date.now();
       state.failures = 0;
       if (pendingRecord && state.stationName) {
-        addRecent(state.stationName, cfg.lines, cfg.dests);
+        addRecent(state.stationName, cfg.lines, cfg.dests, cfg.rows);
         pendingRecord = false;
       }
       applyTitle();
@@ -843,7 +863,7 @@
     state.loading = true;
     pendingRecord = true;
     if (cfg.demo) {   // demo data has no API answer that could confirm the name
-      addRecent(cfg.station, cfg.lines, cfg.dests);
+      addRecent(cfg.station, cfg.lines, cfg.dests, cfg.rows);
       pendingRecord = false;
     }
     applyConfig();
@@ -860,7 +880,7 @@
       lines: $('fLines').value.trim(),
       dests: $('fDests').value.trim(),
       modes: modes.length ? modes : DEFAULTS.modes,
-      rows: clampInt($('fRows').value, 1, 8, DEFAULTS.rows),
+      rows: clampInt($('fRows').value, 1, MAX_ROWS, DEFAULTS.rows),
       demo: $('fDemo').checked,
     });
   });
@@ -870,7 +890,7 @@
   const quickDialog = $('quickDialog');
 
   function renderQuick() {
-    const items = recent.map(({ name, lines, dests }) => {
+    const items = recent.map(({ name, lines, dests, rows }) => {
       const li = document.createElement('li');
       const pick = document.createElement('button');
       pick.type = 'button';
@@ -891,7 +911,16 @@
       del.dataset.station = name;
       del.textContent = '\u00D7';
       del.setAttribute('aria-label', (stopTitle(name) || name) + ' entfernen');
-      li.append(pick, del);
+      const count = document.createElement('input');
+      count.type = 'number';
+      count.className = 'count';
+      count.min = '1';
+      count.max = String(MAX_ROWS);
+      count.value = String(rows || cfg.rows);
+      count.dataset.station = name;
+      count.setAttribute('aria-label', 'Zeilen für ' + (stopTitle(name) || name));
+      count.title = 'Anzahl Zeilen';
+      li.append(pick, count, del);
       return li;
     });
     $('quickList').replaceChildren(...items);
@@ -912,6 +941,24 @@
     saveRecent();
     renderQuick();
   });
+  // Rows per saved stop: stored with the entry; if it is the stop on screen, it applies immediately.
+  $('quickList').addEventListener('change', (e) => {
+    const input = e.target.closest('input.count');
+    if (!input) return;
+    const name = input.dataset.station;
+    const rows = clampInt(input.value, 1, MAX_ROWS, cfg.rows);
+    input.value = String(rows);
+    recent = recent.map((r) => (r.name === name ? { ...r, rows } : r));
+    saveRecent();
+    if (sameStop(name, cfg.station) || (state.stationName && sameStop(name, state.stationName))) {
+      cfg = { ...cfg, rows };
+      saveConfig(cfg);
+      applyConfig();
+      render();
+      refresh();
+    }
+  });
+
   $('quickList').addEventListener('click', (e) => {
     const button = e.target.closest('button');
     if (!button) return;
@@ -923,7 +970,13 @@
     } else if (button.classList.contains('pick')) {
       quickDialog.close();
       const entry = recent.find((e) => e.name === name);
-      commitConfig({ ...cfg, station: name, lines: entry ? entry.lines : '', dests: entry ? entry.dests : '' });
+      commitConfig({
+        ...cfg,
+        station: name,
+        lines: entry ? entry.lines : '',
+        dests: entry ? entry.dests : '',
+        rows: entry && entry.rows ? entry.rows : cfg.rows,
+      });
     }
   });
 
