@@ -1,6 +1,6 @@
 {
-  "name": "Abfahrtsanzeige Bern",
-  "short_name": "Abfahrten",
+  "name": "Abfahrt Bärn",
+  "short_name": "Abfahrt Bärn",
   "description": "Departure display for Bern stops in the style of the Bernmobil stop signs.",
   "lang": "de-CH",
   "start_url": "./",

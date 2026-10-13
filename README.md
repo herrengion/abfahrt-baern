@@ -1,4 +1,4 @@
-# Abfahrtsanzeige Bern
+# Abfahrt Bärn
 
 A private, single-page replica of a "Tramli"-style departure display for stops in Bern, styled like the
 Bernmobil stop signs (amber dot-matrix rows, bus pictogram when a vehicle is due, ticker for long destinations).
