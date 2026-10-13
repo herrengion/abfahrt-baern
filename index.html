@@ -1137,6 +1137,33 @@
     stepStop(dy < 0 ? 1 : -1);
   });
   document.addEventListener('pointercancel', () => { swipe = null; });
+
+  // Tall page (it scrolls): the browser takes over vertical touch drags and cancels the pointer events, so touch events
+  // are used instead. A swipe only switches the stop when it starts and ends at the page edge it pushes against
+  // (swipe up at the bottom -> next, swipe down at the top -> previous), i.e. when it did not scroll the page.
+  const scrollMax = () => document.documentElement.scrollHeight - window.innerHeight;
+  let touch = null;
+  document.addEventListener('touchstart', (e) => {
+    touch = e.touches.length === 1 && !e.target.closest('dialog, button, input, a') && !document.querySelector('dialog[open]')
+      ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now(), top: window.scrollY, max: scrollMax() }
+      : null;
+  }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    const start = touch;
+    touch = null;
+    if (!start || document.documentElement.classList.contains('fits')) return;   // fitting page: pointer events handle it
+    const dx = e.changedTouches[0].clientX - start.x;
+    const dy = e.changedTouches[0].clientY - start.y;
+    if (Math.abs(dy) < 50 || Math.abs(dy) < 1.5 * Math.abs(dx) || Date.now() - start.t > 900) return;
+    if (Math.abs(window.scrollY - start.top) > 2) return;   // the page scrolled: it was a scroll, not a swipe
+    const atBottom = start.top >= start.max - 2;
+    const atTop = start.top <= 2;
+    if (dy < 0 ? !atBottom : !atTop) return;
+    swiped = true;
+    setTimeout(() => { swiped = false; }, 400);
+    stepStop(dy < 0 ? 1 : -1);
+    window.scrollTo(0, 0);
+  }, { passive: true });
   document.addEventListener('click', (e) => { if (swiped) { e.stopPropagation(); e.preventDefault(); } }, true);
   document.addEventListener('keydown', (e) => {
     if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.target.closest('dialog, input, select, textarea')
